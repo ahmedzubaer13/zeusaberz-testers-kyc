@@ -181,6 +181,11 @@ function Brand({ light = false }) {
 
 function Header() {
   const [open, setOpen] = useState(false);
+  const { session, loading } = useAuth();
+
+  function closeMenu() {
+    setOpen(false);
+  }
 
   return (
     <header className="site-header">
@@ -202,24 +207,43 @@ function Header() {
               : "nav-links"
           }
         >
-          <a href="#how">How it works</a>
+          <a href="#how" onClick={closeMenu}>
+            How it works
+          </a>
 
-          <a href="#security">Security</a>
+          <a href="#security" onClick={closeMenu}>
+            Security
+          </a>
 
-          <Link
-            to="/login"
-            className="nav-login"
-          >
-            Log in
-          </Link>
+          {!loading && session ? (
+            <Link
+              to="/dashboard"
+              className="btn btn-primary btn-sm"
+              onClick={closeMenu}
+            >
+              <LayoutDashboard size={16} />
+              Dashboard
+            </Link>
+          ) : !loading ? (
+            <>
+              <Link
+                to="/login"
+                className="nav-login"
+                onClick={closeMenu}
+              >
+                Log in
+              </Link>
 
-          <Link
-            to="/signup"
-            className="btn btn-primary btn-sm"
-          >
-            Become a tester
-            <ArrowRight size={16} />
-          </Link>
+              <Link
+                to="/signup"
+                className="btn btn-primary btn-sm"
+                onClick={closeMenu}
+              >
+                Become a tester
+                <ArrowRight size={16} />
+              </Link>
+            </>
+          ) : null}
         </nav>
       </div>
     </header>
