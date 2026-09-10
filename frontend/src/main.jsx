@@ -1244,6 +1244,8 @@ function Dashboard() {
                 </Link>
               )}
 
+            </div>
+
             <div className="dash-orb">
               <ShieldCheck size={55} />
             </div>
