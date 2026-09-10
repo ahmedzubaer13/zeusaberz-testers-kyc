@@ -1224,15 +1224,59 @@ function Dashboard() {
 
 function Profile() {
   const { session } = useAuth();
-  const metadata = session?.user?.user_metadata || {};
 
-  const [firstName, setFirstName] = useState(metadata.first_name || "");
-  const [lastName, setLastName] = useState(metadata.last_name || "");
-  const [discordName, setDiscordName] = useState(metadata.discord_name || "");
-  const [phone, setPhone] = useState(metadata.phone || "");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [discordName, setDiscordName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [testerNumber, setTesterNumber] = useState(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadProfile() {
+      if (!session?.user?.id) {
+        setLoadingProfile(false);
+        return;
+      }
+
+      const { data, error: profileError } = await supabase
+        .from("profiles")
+        .select("first_name, last_name, discord_name, phone, tester_number")
+        .eq("id", session.user.id)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      if (profileError) {
+        setError(profileError.message || "Failed to load your profile.");
+      } else if (data) {
+        setFirstName(data.first_name || "");
+        setLastName(data.last_name || "");
+        setDiscordName(data.discord_name || "");
+        setPhone(data.phone || "");
+        setTesterNumber(data.tester_number ?? null);
+      }
+
+      setLoadingProfile(false);
+    }
+
+    loadProfile();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id]);
+
+  const profileComplete =
+    !!firstName.trim() &&
+    !!lastName.trim() &&
+    !!discordName.trim() &&
+    !!phone.trim();
 
   async function saveProfile(e) {
     e.preventDefault();
@@ -1240,29 +1284,51 @@ function Profile() {
     setMessage("");
     setError("");
 
-    if (!firstName.trim() || !lastName.trim()) {
-      setError("First Name and Last Name are required.");
+    const first = firstName.trim();
+    const last = lastName.trim();
+    const discord = discordName.trim();
+    const phoneValue = phone.trim();
+
+    if (!first || !last || !discord || !phoneValue) {
+      setError(
+        "Please complete all required fields before saving your profile."
+      );
       setSaving(false);
       return;
     }
 
-    const { error: updateError } = await supabase.auth.updateUser({
-      data: {
-        first_name: firstName.trim(),
-        last_name: lastName.trim(),
-        discord_name: discordName.trim(),
-        phone: phone.trim(),
-      },
-    });
+    const { data, error: updateError } = await supabase
+      .from("profiles")
+      .update({
+        first_name: first,
+        last_name: last,
+        discord_name: discord,
+        phone: phoneValue,
+        full_name: `${first} ${last}`,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", session.user.id)
+      .select("first_name, last_name, discord_name, phone, tester_number")
+      .single();
 
     if (updateError) {
-      setError(updateError.message || "Failed to save profile.");
+      setError(updateError.message || "Failed to save your profile.");
     } else {
-      setMessage("Profile saved successfully.");
+      setFirstName(data.first_name || first);
+      setLastName(data.last_name || last);
+      setDiscordName(data.discord_name || discord);
+      setPhone(data.phone || phoneValue);
+      setTesterNumber(data.tester_number ?? testerNumber);
+      setMessage("Your profile has been saved.");
     }
 
     setSaving(false);
   }
+
+  const email = session?.user?.email || "";
+  const initials = `${firstName} ${lastName}`.trim()
+    ? `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase()
+    : email.charAt(0).toUpperCase() || "T";
 
   return (
     <div className="dashboard">
@@ -1293,108 +1359,216 @@ function Profile() {
       </aside>
 
       <main className="dashboard-main">
-        <div className="dashboard-top">
-          <div>
+        <div className="profile-header">
+          <div className="profile-heading">
             <span className="eyebrow">
               <span className="pulse"></span>
               ACCOUNT
             </span>
+
             <h1>Profile</h1>
-            <p>Add the information needed for your tester account.</p>
+
+            <p>
+              Keep your tester information up to date. All four fields are
+              required to continue with verification.
+            </p>
           </div>
 
-          <div className="avatar">
-            {(firstName || session?.user?.email || "T").charAt(0).toUpperCase()}
+          <div className="profile-identity">
+            <div className="profile-avatar">{initials}</div>
+
+            <div className="profile-identity-copy">
+              <strong>
+                {firstName || lastName
+                  ? `${firstName} ${lastName}`.trim()
+                  : "Tester account"}
+              </strong>
+
+              <span>{email}</span>
+
+              {testerNumber ? (
+                <small>Tester #{String(testerNumber).padStart(3, "0")}</small>
+              ) : (
+                <small>Tester number assigned after verification</small>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="profile-status">
+          <div className={`profile-status-icon ${profileComplete ? "complete" : ""}`}>
+            {profileComplete ? (
+              <CheckCircle2 size={18} />
+            ) : (
+              <Clock3 size={18} />
+            )}
+          </div>
+
+          <div>
+            <strong>
+              {profileComplete
+                ? "Profile complete"
+                : "Profile incomplete"}
+            </strong>
+
+            <span>
+              {profileComplete
+                ? "All required tester information has been provided."
+                : "Complete all four required fields before starting KYC verification."}
+            </span>
           </div>
         </div>
 
         <div className="profile-page-grid">
           <section className="dash-card profile-form-card">
             <div className="card-title">
-              <span>Tester information</span>
+              <div>
+                <span className="card-kicker">REQUIRED INFORMATION</span>
+                <h2>Tester information</h2>
+              </div>
               <UserRound size={20} />
             </div>
 
-            <form className="profile-form" onSubmit={saveProfile}>
-              <div className="profile-form-grid">
+            {loadingProfile ? (
+              <div className="profile-loading">Loading your profile...</div>
+            ) : (
+              <form className="profile-form" onSubmit={saveProfile}>
+                <div className="profile-form-grid">
+                  <label className="field">
+                    <span>
+                      First Name <em>Required</em>
+                    </span>
+                    <input
+                      type="text"
+                      value={firstName}
+                      onChange={(e) => {
+                        setFirstName(e.target.value);
+                        setMessage("");
+                      }}
+                      placeholder="Enter your first name"
+                      autoComplete="given-name"
+                      maxLength={80}
+                      required
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>
+                      Last Name <em>Required</em>
+                    </span>
+                    <input
+                      type="text"
+                      value={lastName}
+                      onChange={(e) => {
+                        setLastName(e.target.value);
+                        setMessage("");
+                      }}
+                      placeholder="Enter your last name"
+                      autoComplete="family-name"
+                      maxLength={80}
+                      required
+                    />
+                  </label>
+                </div>
+
                 <label className="field">
-                  <span>First Name</span>
+                  <span>
+                    Discord Name <em>Required</em>
+                  </span>
                   <input
                     type="text"
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                    placeholder="First name"
-                    autoComplete="given-name"
+                    value={discordName}
+                    onChange={(e) => {
+                      setDiscordName(e.target.value);
+                      setMessage("");
+                    }}
+                    placeholder="Enter your Discord username"
+                    autoComplete="off"
+                    maxLength={100}
+                    required
+                  />
+                  <small>
+                    Use the Discord name you actively use for tester
+                    communication.
+                  </small>
+                </label>
+
+                <label className="field">
+                  <span>
+                    Phone Number <em>Required</em>
+                  </span>
+                  <input
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => {
+                      setPhone(e.target.value);
+                      setMessage("");
+                    }}
+                    placeholder="+880 1XXXXXXXXX"
+                    autoComplete="tel"
+                    maxLength={30}
                     required
                   />
                 </label>
 
-                <label className="field">
-                  <span>Last Name</span>
-                  <input
-                    type="text"
-                    value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
-                    placeholder="Last name"
-                    autoComplete="family-name"
-                    required
-                  />
-                </label>
-              </div>
+                {error && <div className="form-error">{error}</div>}
+                {message && <div className="form-success">{message}</div>}
 
-              <label className="field">
-                <span>Discord Name</span>
-                <input
-                  type="text"
-                  value={discordName}
-                  onChange={(e) => setDiscordName(e.target.value)}
-                  placeholder="Your Discord username"
-                  autoComplete="off"
-                />
-              </label>
+                <div className="profile-form-footer">
+                  <span className="required-note">
+                    <span>*</span> All fields are required
+                  </span>
 
-              <label className="field">
-                <span>Phone Number</span>
-                <input
-                  type="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="+880 1XXXXXXXXX"
-                  autoComplete="tel"
-                />
-              </label>
-
-              {error && <div className="form-error">{error}</div>}
-              {message && <div className="form-success">{message}</div>}
-
-              <button
-                type="submit"
-                className="btn btn-primary"
-                disabled={saving}
-              >
-                {saving ? "Saving..." : "Save changes"}
-                {!saving && <ArrowRight size={16} />}
-              </button>
-            </form>
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={saving}
+                  >
+                    {saving ? "Saving..." : "Save changes"}
+                    {!saving && <ArrowRight size={16} />}
+                  </button>
+                </div>
+              </form>
+            )}
           </section>
 
-          <section className="dash-card">
+          <section className="dash-card account-card">
             <div className="card-title">
-              <span>Account</span>
+              <div>
+                <span className="card-kicker">ACCOUNT</span>
+                <h2>Account details</h2>
+              </div>
               <ShieldCheck size={20} />
             </div>
 
-            <div className="profile-details">
-              <div className="profile-row">
+            <div className="account-details">
+              <div className="account-detail">
                 <span>Email</span>
-                <strong>{session?.user?.email || "Not available"}</strong>
+                <strong className="account-email">{email || "Not available"}</strong>
               </div>
-              <div className="profile-row">
-                <span>Account ID</span>
-                <strong className="profile-id">
-                  {session?.user?.id || "Not available"}
+
+              <div className="account-detail">
+                <span>Tester number</span>
+                <strong>
+                  {testerNumber
+                    ? `#${String(testerNumber).padStart(3, "0")}`
+                    : "Not assigned"}
                 </strong>
               </div>
+
+              <div className="account-detail">
+                <span>Account ID</span>
+                <code>{session?.user?.id || "Not available"}</code>
+              </div>
+            </div>
+
+            <div className="account-note">
+              <LockKeyhole size={16} />
+              <span>
+                Your account ID is system-generated and cannot be changed.
+                Your tester number is assigned by an administrator after
+                successful verification.
+              </span>
             </div>
           </section>
         </div>
@@ -1402,7 +1576,6 @@ function Profile() {
     </div>
   );
 }
-
 
 // ============================================================
 // KYC
