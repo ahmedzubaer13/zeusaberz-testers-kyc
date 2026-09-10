@@ -1059,11 +1059,36 @@ function CheckEmail() {
 function Dashboard() {
   const { session } = useAuth();
 
-  const [kyc] =
-    useState("not_started");
+  const [kyc, setKyc] = useState(null);
+  const [loadingKyc, setLoadingKyc] = useState(true);
 
   const [loggingOut, setLoggingOut] =
     useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadKycStatus() {
+      if (!session) return;
+
+      setLoadingKyc(true);
+
+      try {
+        const result = await kycApi(session, "/kyc/status");
+        if (!cancelled) setKyc(result.kyc || null);
+      } catch (error) {
+        console.error("Unable to load KYC status:", error);
+      } finally {
+        if (!cancelled) setLoadingKyc(false);
+      }
+    }
+
+    loadKycStatus();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
 
   const email =
     session?.user?.email || "";
@@ -1170,26 +1195,40 @@ function Dashboard() {
               </span>
 
               <h2>
-                Complete your verification.
+                {loadingKyc
+                  ? "Loading verification status…"
+                  : kyc?.status === "pending" || kyc?.status === "under_review"
+                    ? "Under Review."
+                    : kyc?.status === "verified"
+                      ? "Verification complete."
+                      : kyc?.status === "rejected" || kyc?.status === "needs_action"
+                        ? "Verification needs attention."
+                        : "Complete your verification."}
               </h2>
 
               <p>
-                Your first step is to verify
-                your identity. This keeps the
-                tester network trusted and helps
-                us match you with eligible projects.
+                {loadingKyc
+                  ? "Checking the latest status of your identity verification."
+                  : kyc?.status === "pending" || kyc?.status === "under_review"
+                    ? "Your identity documents have been submitted successfully. Our verification team is reviewing your application."
+                    : kyc?.status === "verified"
+                      ? "Your identity has been verified. You can now access eligible tester opportunities."
+                      : kyc?.status === "rejected" || kyc?.status === "needs_action"
+                        ? "Your verification requires an update. Open verification to see what needs to be completed."
+                        : "Your first step is to verify your identity. This keeps the tester network trusted and helps us match you with eligible projects."}
               </p>
 
-              <Link
-                to="/kyc"
-                className="btn btn-primary"
-              >
-                Start verification
-                <ArrowRight size={17} />
-              </Link>
-
-            </div>
-
+              {kyc?.status !== "pending" && kyc?.status !== "under_review" && kyc?.status !== "verified" && (
+                <Link
+                  to="/kyc"
+                  className="btn btn-primary"
+                >
+                  {kyc?.status === "rejected" || kyc?.status === "needs_action"
+                    ? "Continue verification"
+                    : "Start verification"}
+                  <ArrowRight size={17} />
+                </Link>
+              )}
 
             <div className="dash-orb">
               <ShieldCheck size={55} />
@@ -1214,15 +1253,21 @@ function Dashboard() {
             <div className="progress-row">
 
               <span className="progress-value">
-                {kyc === "verified"
+                {kyc?.status === "verified"
                   ? "100"
-                  : "20"}%
+                  : kyc?.status === "pending" || kyc?.status === "under_review"
+                    ? "60"
+                    : "20"}%
               </span>
 
               <span>
-                {kyc === "verified"
+                {kyc?.status === "verified"
                   ? "Verified"
-                  : "In progress"}
+                  : kyc?.status === "pending" || kyc?.status === "under_review"
+                    ? "Under Review"
+                    : kyc?.status === "rejected" || kyc?.status === "needs_action"
+                      ? "Needs Action"
+                      : "In progress"}
               </span>
 
             </div>
@@ -1233,9 +1278,11 @@ function Dashboard() {
               <span
                 style={{
                   width:
-                    kyc === "verified"
+                    kyc?.status === "verified"
                       ? "100%"
-                      : "20%",
+                      : kyc?.status === "pending" || kyc?.status === "under_review"
+                        ? "60%"
+                        : "20%",
                 }}
               />
 
