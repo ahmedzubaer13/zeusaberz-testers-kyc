@@ -1221,259 +1221,829 @@ function Dashboard() {
 // KYC
 // ============================================================
 
-function KYC() {
-  const [step, setStep] =
-    useState(1);
+const KYC_WORKER_URL =
+  import.meta.env.VITE_KYC_WORKER_URL;
 
-  const [files, setFiles] =
-    useState({
-      front: null,
-      back: null,
-      selfie: null,
-    });
-
-
-  const items = [
-    ["front", "NID front"],
-    ["back", "NID back"],
-    ["selfie", "Selfie"],
-  ];
-
-
-  const currentKey =
-    items[step - 1]?.[0];
-
-
-  const currentTitle =
-    items[step - 1]?.[1];
-
-
-  const canNext =
-    currentKey
-      ? Boolean(files[currentKey])
-      : false;
-
-
-  function pick(key, e) {
-    const selected =
-      e.target.files?.[0] || null;
-
-    setFiles({
-      ...files,
-      [key]: selected,
-    });
+async function kycApi(session, path, options = {}) {
+  if (!KYC_WORKER_URL) {
+    throw new Error("KYC service URL is not configured.");
   }
 
+  if (!session?.access_token) {
+    throw new Error("Your session has expired. Please log in again.");
+  }
 
-  // Prevent the old prototype from rendering
-  // an invalid fourth step.
-  if (step > 3) {
+  const response = await fetch(
+    `${KYC_WORKER_URL}${path}`,
+    {
+      ...options,
+      headers: {
+        ...(options.headers || {}),
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    }
+  );
+
+  let data = null;
+
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      data?.error ||
+      data?.message ||
+      "The KYC service returned an error."
+    );
+  }
+
+  return data;
+}
+
+function KYC() {
+  const { session } = useAuth();
+
+  const [step, setStep] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState("");
+  const [kyc, setKyc] = useState(null);
+  const [uploadedDocuments, setUploadedDocuments] = useState([]);
+  const [submitted, setSubmitted] = useState(false);
+  const [consent, setConsent] = useState(false);
+
+  const [identityType, setIdentityType] =
+    useState("");
+
+  const [files, setFiles] = useState({
+    nid_front: null,
+    nid_back: null,
+    birth_certificate: null,
+    passport: null,
+    selfie: null,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadKyc() {
+      setLoading(true);
+      setError("");
+
+      try {
+        const result = await kycApi(
+          session,
+          "/kyc/status"
+        );
+
+        if (cancelled) return;
+
+        if (result.kyc) {
+          setKyc(result.kyc);
+          setUploadedDocuments(result.documents || []);
+
+          if (result.kyc.status === "pending") {
+            setSubmitted(true);
+          }
+        } else {
+          const started = await kycApi(
+            session,
+            "/kyc/start",
+            { method: "POST" }
+          );
+
+          if (cancelled) return;
+
+          setKyc(started.kyc);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Unable to load verification."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadKyc();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
+
+  function pick(key, event) {
+    const selected =
+      event.target.files?.[0] || null;
+
+    setFiles((current) => ({
+      ...current,
+      [key]: selected,
+    }));
+
+    setError("");
+  }
+
+  const identityLabel =
+    identityType === "nid"
+      ? "National ID (NID)"
+      : identityType === "birth_certificate"
+        ? "Birth Certificate"
+        : identityType === "passport"
+          ? "Passport"
+          : "";
+
+  const identityKeys =
+    identityType === "nid"
+      ? ["nid_front", "nid_back"]
+      : identityType
+        ? [identityType]
+        : [];
+
+  const identityComplete =
+    identityKeys.length > 0 &&
+    identityKeys.every(
+      (key) => Boolean(files[key])
+    );
+
+  const selfieComplete =
+    Boolean(files.selfie);
+
+  async function uploadFile(
+    documentType,
+    file
+  ) {
+    const form = new FormData();
+
+    form.append(
+      "kyc_id",
+      kyc.id
+    );
+
+    form.append(
+      "document_type",
+      documentType
+    );
+
+    form.append(
+      "file",
+      file
+    );
+
+    const result = await kycApi(
+      session,
+      "/kyc/upload",
+      {
+        method: "POST",
+        body: form,
+      }
+    );
+
+    return result.document;
+  }
+
+  async function continueFromIdentity() {
+    if (!identityType) {
+      setError(
+        "Please choose an identity document."
+      );
+      return;
+    }
+
+    if (!identityComplete) {
+      setError(
+        identityType === "nid"
+          ? "Please upload both sides of your NID."
+          : `Please upload your ${identityLabel}.`
+      );
+      return;
+    }
+
+    if (!kyc) {
+      setError(
+        "Your verification session is not ready. Please refresh."
+      );
+      return;
+    }
+
+    setWorking(true);
+    setError("");
+
+    try {
+      for (const key of identityKeys) {
+        const document = await uploadFile(
+          key,
+          files[key]
+        );
+
+        setUploadedDocuments(
+          (current) => [
+            ...current.filter(
+              (item) =>
+                item.document_type !== key
+            ),
+            document,
+          ]
+        );
+      }
+
+      setStep(3);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Identity document upload failed."
+      );
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function continueFromSelfie() {
+    if (!selfieComplete) {
+      setError(
+        "Please upload your selfie."
+      );
+      return;
+    }
+
+    if (!kyc) {
+      setError(
+        "Your verification session is not ready."
+      );
+      return;
+    }
+
+    setWorking(true);
+    setError("");
+
+    try {
+      const document = await uploadFile(
+        "selfie",
+        files.selfie
+      );
+
+      setUploadedDocuments(
+        (current) => [
+          ...current.filter(
+            (item) =>
+              item.document_type !== "selfie"
+          ),
+          document,
+        ]
+      );
+
+      setStep(4);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Selfie upload failed."
+      );
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function submitVerification() {
+    if (!consent) {
+      setError(
+        "Please confirm the consent before submitting."
+      );
+      return;
+    }
+
+    setWorking(true);
+    setError("");
+
+    try {
+      const result = await kycApi(
+        session,
+        "/kyc/submit",
+        {
+          method: "POST",
+        }
+      );
+
+      setKyc(result.kyc);
+      setSubmitted(true);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to submit verification."
+      );
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  if (loading) {
     return (
       <div className="kyc-page">
-
         <header className="site-header">
-
           <div className="container nav">
-
             <Brand />
 
             <span className="secure-nav">
               <LockKeyhole size={15} />
               Secure verification
             </span>
-
           </div>
-
         </header>
 
-
         <div className="kyc-wrap">
-
           <div className="kyc-card">
-
             <div className="eyebrow">
               VERIFICATION
             </div>
 
             <h1>
-              Ready for submission
+              Loading verification…
             </h1>
 
             <p>
-              Your documents have been
-              selected. Final submission will
-              be connected to the secure KYC
-              service in the next step.
+              Securely loading your verification session.
             </p>
-
-            <button
-              className="btn btn-primary btn-full"
-              onClick={() => setStep(3)}
-            >
-              Back to verification
-            </button>
-
           </div>
-
         </div>
-
       </div>
     );
   }
 
+  if (submitted || kyc?.status === "pending") {
+    return (
+      <div className="kyc-page">
+        <header className="site-header">
+          <div className="container nav">
+            <Brand />
+
+            <span className="secure-nav">
+              <LockKeyhole size={15} />
+              Secure verification
+            </span>
+          </div>
+        </header>
+
+        <div className="kyc-wrap">
+          <div className="kyc-card kyc-success-card">
+            <div className="success-icon">
+              <CheckCircle2 size={42} />
+            </div>
+
+            <div className="eyebrow">
+              VERIFICATION SUBMITTED
+            </div>
+
+            <h1>
+              Under review.
+            </h1>
+
+            <p>
+              Your identity documents have been securely
+              submitted. Our verification team will review
+              your application and update your status.
+            </p>
+
+            <div className="kyc-status-summary">
+              <span>Status</span>
+              <strong>PENDING REVIEW</strong>
+            </div>
+
+            <Link
+              to="/dashboard"
+              className="btn btn-primary btn-full"
+            >
+              Return to dashboard
+              <ArrowRight size={17} />
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const stepTitle =
+    step === 1
+      ? "Choose your document"
+      : step === 2
+        ? `Upload ${identityLabel}`
+        : step === 3
+          ? "Upload your selfie"
+          : "Review & submit";
+
+  const stepDescription =
+    step === 1
+      ? "Choose one accepted identity document. You do not need to provide more than one."
+      : step === 2
+        ? identityType === "nid"
+          ? "Upload clear images of the front and back of your NID."
+          : `Upload a clear copy of your ${identityLabel}.`
+        : step === 3
+          ? "Upload a clear selfie so our verification team can compare it with your identity document."
+          : "Confirm your information and consent, then submit your verification.";
+
+  function renderUploadField(
+    key,
+    title,
+    accept = ".jpg,.jpeg,.png,.webp,.pdf"
+  ) {
+    const selected = files[key];
+
+    return (
+      <label className="upload-box compact-upload">
+        <Upload size={26} />
+
+        <strong>
+          {selected
+            ? selected.name
+            : title}
+        </strong>
+
+        <span>
+          JPG, PNG, WEBP or PDF · maximum 10 MB
+        </span>
+
+        <input
+          type="file"
+          accept={accept}
+          onChange={(event) =>
+            pick(key, event)
+          }
+        />
+      </label>
+    );
+  }
 
   return (
     <div className="kyc-page">
-
       <header className="site-header">
-
         <div className="container nav">
-
           <Brand />
 
           <span className="secure-nav">
             <LockKeyhole size={15} />
             Secure verification
           </span>
-
         </div>
-
       </header>
-
 
       <div className="kyc-wrap">
 
         <div className="kyc-progress">
+          {[1, 2, 3, 4].map(
+            (number, index) => (
+              <React.Fragment
+                key={number}
+              >
+                <span
+                  className={
+                    step >= number
+                      ? "active"
+                      : ""
+                  }
+                >
+                  {String(number).padStart(
+                    2,
+                    "0"
+                  )}
+                </span>
 
-          <span
-            className={
-              step >= 1
-                ? "active"
-                : ""
-            }
-          >
-            01
-          </span>
-
-          <i></i>
-
-          <span
-            className={
-              step >= 2
-                ? "active"
-                : ""
-            }
-          >
-            02
-          </span>
-
-          <i></i>
-
-          <span
-            className={
-              step >= 3
-                ? "active"
-                : ""
-            }
-          >
-            03
-          </span>
-
+                {index < 3 && <i />}
+              </React.Fragment>
+            )
+          )}
         </div>
-
 
         <div className="kyc-card">
 
           <div className="eyebrow">
-            IDENTITY VERIFICATION
+            IDENTITY VERIFICATION · 0{step}/04
           </div>
 
           <h1>
-            {currentTitle}
+            {stepTitle}
           </h1>
 
           <p>
-            Upload a clear image. Your
-            document is stored privately and
-            used only for verification.
+            {stepDescription}
           </p>
 
+          {error && (
+            <div className="kyc-error">
+              {error}
+            </div>
+          )}
 
-          <label className="upload-box">
+          {/* STEP 1 */}
+          {step === 1 && (
+            <div className="identity-options">
 
-            <Upload size={28} />
+              <button
+                type="button"
+                className={
+                  identityType === "nid"
+                    ? "identity-option selected"
+                    : "identity-option"
+                }
+                onClick={() => {
+                  setIdentityType("nid");
+                  setError("");
+                }}
+              >
+                <div>
+                  <strong>
+                    National ID (NID)
+                  </strong>
 
-            <strong>
-              {files[currentKey]
-                ? files[currentKey].name
-                : "Choose a file"}
-            </strong>
+                  <span>
+                    Front + back
+                  </span>
+                </div>
 
-            <span>
-              JPG, PNG or PDF · maximum 10 MB
-            </span>
+                <ChevronRight size={18} />
+              </button>
 
-            <input
-              type="file"
-              accept=".jpg,.jpeg,.png,.pdf"
-              onChange={(e) =>
-                pick(currentKey, e)
-              }
-            />
+              <button
+                type="button"
+                className={
+                  identityType ===
+                  "birth_certificate"
+                    ? "identity-option selected"
+                    : "identity-option"
+                }
+                onClick={() => {
+                  setIdentityType(
+                    "birth_certificate"
+                  );
+                  setError("");
+                }}
+              >
+                <div>
+                  <strong>
+                    Birth Certificate
+                  </strong>
 
-          </label>
+                  <span>
+                    One document
+                  </span>
+                </div>
 
+                <ChevronRight size={18} />
+              </button>
+
+              <button
+                type="button"
+                className={
+                  identityType === "passport"
+                    ? "identity-option selected"
+                    : "identity-option"
+                }
+                onClick={() => {
+                  setIdentityType(
+                    "passport"
+                  );
+                  setError("");
+                }}
+              >
+                <div>
+                  <strong>
+                    Passport
+                  </strong>
+
+                  <span>
+                    One document
+                  </span>
+                </div>
+
+                <ChevronRight size={18} />
+              </button>
+
+            </div>
+          )}
+
+          {/* STEP 2 */}
+          {step === 2 && (
+            <div className="upload-stack">
+
+              {identityType === "nid" ? (
+                <>
+                  {renderUploadField(
+                    "nid_front",
+                    "Choose NID front"
+                  )}
+
+                  {renderUploadField(
+                    "nid_back",
+                    "Choose NID back"
+                  )}
+                </>
+              ) : (
+                renderUploadField(
+                  identityType,
+                  `Choose ${identityLabel}`
+                )
+              )}
+
+            </div>
+          )}
+
+          {/* STEP 3 */}
+          {step === 3 && (
+            <div className="upload-stack">
+              {renderUploadField(
+                "selfie",
+                "Choose selfie",
+                ".jpg,.jpeg,.png,.webp"
+              )}
+
+              <div className="kyc-help">
+                <ShieldCheck size={17} />
+
+                <span>
+                  Use a recent, clear photo of your face.
+                  Avoid sunglasses, masks and heavy shadows.
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 4 */}
+          {step === 4 && (
+            <div className="review-panel">
+
+              <div className="review-row">
+                <span>
+                  Identity document
+                </span>
+
+                <strong>
+                  {identityLabel}
+                </strong>
+              </div>
+
+              <div className="review-row">
+                <span>
+                  Identity files
+                </span>
+
+                <strong>
+                  {identityType === "nid"
+                    ? "2 files uploaded"
+                    : "1 file uploaded"}
+                </strong>
+              </div>
+
+              <div className="review-row">
+                <span>
+                  Selfie
+                </span>
+
+                <strong>
+                  Uploaded
+                </strong>
+              </div>
+
+              <label className="consent-check">
+                <input
+                  type="checkbox"
+                  checked={consent}
+                  onChange={(event) =>
+                    setConsent(
+                      event.target.checked
+                    )
+                  }
+                />
+
+                <span>
+                  I confirm that the information and
+                  documents I have provided are mine and
+                  accurate, and I consent to ZeusaberZ
+                  processing them for identity verification.
+                </span>
+              </label>
+
+            </div>
+          )}
 
           <div className="kyc-actions">
 
             {step > 1 ? (
               <button
                 className="btn btn-ghost"
-                onClick={() =>
-                  setStep(step - 1)
-                }
+                disabled={working}
+                onClick={() => {
+                  setError("");
+                  setStep(step - 1);
+                }}
               >
                 Back
               </button>
             ) : (
-              <span />
+              <Link
+                to="/dashboard"
+                className="btn btn-ghost"
+              >
+                Cancel
+              </Link>
             )}
 
-
-            {step < 3 ? (
-
+            {step === 1 && (
               <button
                 className="btn btn-primary"
-                disabled={!canNext}
-                onClick={() =>
-                  setStep(step + 1)
-                }
+                disabled={!identityType}
+                onClick={() => {
+                  setError("");
+                  setStep(2);
+                }}
               >
                 Continue
                 <ArrowRight size={17} />
               </button>
+            )}
 
-            ) : (
-
+            {step === 2 && (
               <button
                 className="btn btn-primary"
-                disabled={!canNext}
-                onClick={() =>
-                  setStep(4)
+                disabled={
+                  !identityComplete ||
+                  working
+                }
+                onClick={
+                  continueFromIdentity
                 }
               >
-                Submit verification
-                <CheckCircle2 size={17} />
-              </button>
+                {working
+                  ? "Uploading…"
+                  : "Upload & continue"}
 
+                {!working && (
+                  <ArrowRight size={17} />
+                )}
+              </button>
+            )}
+
+            {step === 3 && (
+              <button
+                className="btn btn-primary"
+                disabled={
+                  !selfieComplete ||
+                  working
+                }
+                onClick={
+                  continueFromSelfie
+                }
+              >
+                {working
+                  ? "Uploading…"
+                  : "Upload & continue"}
+
+                {!working && (
+                  <ArrowRight size={17} />
+                )}
+              </button>
+            )}
+
+            {step === 4 && (
+              <button
+                className="btn btn-primary"
+                disabled={
+                  !consent ||
+                  working
+                }
+                onClick={
+                  submitVerification
+                }
+              >
+                {working
+                  ? "Submitting…"
+                  : "Submit verification"}
+
+                {!working && (
+                  <CheckCircle2 size={17} />
+                )}
+              </button>
             )}
 
           </div>
 
+          <div className="kyc-private-note">
+            <LockKeyhole size={14} />
+            Your documents are transmitted securely and
+            stored in private storage.
+          </div>
+
         </div>
-
       </div>
-
     </div>
   );
 }
