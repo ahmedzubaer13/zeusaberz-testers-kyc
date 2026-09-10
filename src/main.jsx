@@ -1242,6 +1242,128 @@ function Dashboard() {
 
 
 // ============================================================
+// PROFILE
+// ============================================================
+
+function Profile() {
+  const { session } = useAuth();
+
+  const email = session?.user?.email || "";
+  const initial = email
+    ? email.charAt(0).toUpperCase()
+    : "T";
+
+  return (
+    <div className="dashboard">
+      <aside className="sidebar">
+        <Brand />
+
+        <div className="side-label">
+          WORKER
+        </div>
+
+        <NavLink
+          to="/dashboard"
+          className="side-link"
+        >
+          <LayoutDashboard size={18} />
+          Dashboard
+        </NavLink>
+
+        <NavLink
+          to="/profile"
+          className="side-link"
+        >
+          <UserRound size={18} />
+          Profile
+        </NavLink>
+
+        <div className="side-bottom">
+          <button
+            className="side-link"
+            onClick={async () => {
+              if (supabase) {
+                await supabase.auth.signOut();
+              }
+            }}
+          >
+            <LogOut size={18} />
+            Log out
+          </button>
+        </div>
+      </aside>
+
+      <main className="dashboard-main">
+        <div className="dashboard-top">
+          <div>
+            <span className="eyebrow">
+              <span className="pulse"></span>
+              ACCOUNT
+            </span>
+            <h1>Profile</h1>
+            <p>
+              Manage your tester account information.
+            </p>
+          </div>
+
+          <div className="avatar">
+            {initial}
+          </div>
+        </div>
+
+        <div className="dashboard-grid">
+          <section className="dash-card">
+            <div className="card-title">
+              <span>Account information</span>
+              <UserRound size={20} />
+            </div>
+
+            <div className="profile-details">
+              <div className="profile-row">
+                <span>Email</span>
+                <strong>{email || "Not available"}</strong>
+              </div>
+
+              <div className="profile-row">
+                <span>Account ID</span>
+                <strong className="profile-id">
+                  {session?.user?.id || "Not available"}
+                </strong>
+              </div>
+            </div>
+          </section>
+
+          <section className="dash-card">
+            <div className="card-title">
+              <span>Tester profile</span>
+              <ShieldCheck size={20} />
+            </div>
+
+            <div className="empty-work">
+              <UserRound size={24} />
+              <strong>Complete your profile</strong>
+              <span>
+                Your tester information and verification
+                status will appear here.
+              </span>
+
+              <Link
+                to="/kyc"
+                className="btn btn-primary"
+              >
+                Continue verification
+                <ArrowRight size={16} />
+              </Link>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+
+// ============================================================
 // KYC
 // ============================================================
 
@@ -2106,6 +2228,15 @@ function App() {
         element={
           <ProtectedRoute>
             <Dashboard />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/profile"
+        element={
+          <ProtectedRoute>
+            <Profile />
           </ProtectedRoute>
         }
       />
