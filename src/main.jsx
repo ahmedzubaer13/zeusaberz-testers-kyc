@@ -47,9 +47,36 @@ import logo from "./assets/zeusaberz-logo.png";
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
+const AUTH_PERSISTENCE_KEY = "zeusaberz_auth_persistence";
+
+function getAuthStorage() {
+  if (typeof window === "undefined") return undefined;
+
+  const getStorage = () =>
+    window.localStorage.getItem(AUTH_PERSISTENCE_KEY) !== "false"
+      ? window.localStorage
+      : window.sessionStorage;
+
+  return {
+    getItem: (key) => getStorage().getItem(key),
+    setItem: (key, value) => getStorage().setItem(key, value),
+    removeItem: (key) => {
+      window.localStorage.removeItem(key);
+      window.sessionStorage.removeItem(key);
+    },
+  };
+}
+
 export const supabase =
   supabaseUrl && supabaseKey
-    ? createClient(supabaseUrl, supabaseKey)
+    ? createClient(supabaseUrl, supabaseKey, {
+        auth: {
+          storage: getAuthStorage(),
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: true,
+        },
+      })
     : null;
 
 
@@ -181,6 +208,7 @@ function Brand({ light = false }) {
 
 function Header() {
   const [open, setOpen] = useState(false);
+  const { session } = useAuth();
 
   return (
     <header className="site-header">
@@ -206,20 +234,34 @@ function Header() {
 
           <a href="#security">Security</a>
 
-          <Link
-            to="/login"
-            className="nav-login"
-          >
-            Log in
-          </Link>
+          {session ? (
+            <Link
+              to="/dashboard"
+              className="nav-login"
+              onClick={() => setOpen(false)}
+            >
+              Dashboard
+            </Link>
+          ) : (
+            <>
+              <Link
+                to="/login"
+                className="nav-login"
+                onClick={() => setOpen(false)}
+              >
+                Log in
+              </Link>
 
-          <Link
-            to="/signup"
-            className="btn btn-primary btn-sm"
-          >
-            Become a tester
-            <ArrowRight size={16} />
-          </Link>
+              <Link
+                to="/signup"
+                className="btn btn-primary btn-sm"
+                onClick={() => setOpen(false)}
+              >
+                Become a tester
+                <ArrowRight size={16} />
+              </Link>
+            </>
+          )}
         </nav>
       </div>
     </header>
@@ -839,6 +881,12 @@ function Login() {
   const [password, setPassword] =
     useState("");
 
+  const [staySignedIn, setStaySignedIn] =
+    useState(() => {
+      if (typeof window === "undefined") return true;
+      return window.localStorage.getItem(AUTH_PERSISTENCE_KEY) !== "false";
+    });
+
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -855,6 +903,19 @@ function Login() {
     }
 
     setBusy(true);
+
+    window.localStorage.setItem(
+      AUTH_PERSISTENCE_KEY,
+      staySignedIn ? "true" : "false"
+    );
+
+    if (!staySignedIn) {
+      // Remove any previous persistent Supabase session before creating
+      // the new session in sessionStorage.
+      Object.keys(window.localStorage)
+        .filter((key) => key.startsWith("sb-"))
+        .forEach((key) => window.localStorage.removeItem(key));
+    }
 
     const { error } =
       await supabase.auth.signInWithPassword({
@@ -912,6 +973,15 @@ function Login() {
           />
         </label>
 
+
+        <label className="stay-signed-in">
+          <input
+            type="checkbox"
+            checked={staySignedIn}
+            onChange={(e) => setStaySignedIn(e.target.checked)}
+          />
+          <span>Stay signed in</span>
+        </label>
 
         {error && (
           <div className="form-error">
@@ -1010,6 +1080,7 @@ function Dashboard() {
     setLoggingOut(true);
 
     await supabase.auth.signOut();
+    window.localStorage.removeItem(AUTH_PERSISTENCE_KEY);
 
     setLoggingOut(false);
   }
@@ -1350,7 +1421,10 @@ function Profile() {
         <div className="side-bottom">
           <button
             className="side-link"
-            onClick={() => supabase.auth.signOut()}
+            onClick={async () => {
+              await supabase.auth.signOut();
+              window.localStorage.removeItem(AUTH_PERSISTENCE_KEY);
+            }}
           >
             <LogOut size={18} />
             Log out
