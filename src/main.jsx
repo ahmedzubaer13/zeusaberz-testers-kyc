@@ -181,11 +181,6 @@ function Brand({ light = false }) {
 
 function Header() {
   const [open, setOpen] = useState(false);
-  const { session, loading } = useAuth();
-
-  function closeMenu() {
-    setOpen(false);
-  }
 
   return (
     <header className="site-header">
@@ -207,43 +202,24 @@ function Header() {
               : "nav-links"
           }
         >
-          <a href="#how" onClick={closeMenu}>
-            How it works
-          </a>
+          <a href="#how">How it works</a>
 
-          <a href="#security" onClick={closeMenu}>
-            Security
-          </a>
+          <a href="#security">Security</a>
 
-          {!loading && session ? (
-            <Link
-              to="/dashboard"
-              className="btn btn-primary btn-sm"
-              onClick={closeMenu}
-            >
-              <LayoutDashboard size={16} />
-              Dashboard
-            </Link>
-          ) : !loading ? (
-            <>
-              <Link
-                to="/login"
-                className="nav-login"
-                onClick={closeMenu}
-              >
-                Log in
-              </Link>
+          <Link
+            to="/login"
+            className="nav-login"
+          >
+            Log in
+          </Link>
 
-              <Link
-                to="/signup"
-                className="btn btn-primary btn-sm"
-                onClick={closeMenu}
-              >
-                Become a tester
-                <ArrowRight size={16} />
-              </Link>
-            </>
-          ) : null}
+          <Link
+            to="/signup"
+            className="btn btn-primary btn-sm"
+          >
+            Become a tester
+            <ArrowRight size={16} />
+          </Link>
         </nav>
       </div>
     </header>
@@ -1241,39 +1217,66 @@ function Dashboard() {
 }
 
 
+
 // ============================================================
 // PROFILE
 // ============================================================
 
 function Profile() {
   const { session } = useAuth();
+  const metadata = session?.user?.user_metadata || {};
 
-  const email = session?.user?.email || "";
-  const initial = email
-    ? email.charAt(0).toUpperCase()
-    : "T";
+  const [firstName, setFirstName] = useState(metadata.first_name || "");
+  const [lastName, setLastName] = useState(metadata.last_name || "");
+  const [discordName, setDiscordName] = useState(metadata.discord_name || "");
+  const [phone, setPhone] = useState(metadata.phone || "");
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function saveProfile(e) {
+    e.preventDefault();
+    setSaving(true);
+    setMessage("");
+    setError("");
+
+    if (!firstName.trim() || !lastName.trim()) {
+      setError("First Name and Last Name are required.");
+      setSaving(false);
+      return;
+    }
+
+    const { error: updateError } = await supabase.auth.updateUser({
+      data: {
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
+        discord_name: discordName.trim(),
+        phone: phone.trim(),
+      },
+    });
+
+    if (updateError) {
+      setError(updateError.message || "Failed to save profile.");
+    } else {
+      setMessage("Profile saved successfully.");
+    }
+
+    setSaving(false);
+  }
 
   return (
     <div className="dashboard">
       <aside className="sidebar">
         <Brand />
 
-        <div className="side-label">
-          WORKER
-        </div>
+        <div className="side-label">WORKER</div>
 
-        <NavLink
-          to="/dashboard"
-          className="side-link"
-        >
+        <NavLink to="/dashboard" className="side-link">
           <LayoutDashboard size={18} />
           Dashboard
         </NavLink>
 
-        <NavLink
-          to="/profile"
-          className="side-link"
-        >
+        <NavLink to="/profile" className="side-link active">
           <UserRound size={18} />
           Profile
         </NavLink>
@@ -1281,11 +1284,7 @@ function Profile() {
         <div className="side-bottom">
           <button
             className="side-link"
-            onClick={async () => {
-              if (supabase) {
-                await supabase.auth.signOut();
-              }
-            }}
+            onClick={() => supabase.auth.signOut()}
           >
             <LogOut size={18} />
             Log out
@@ -1301,59 +1300,101 @@ function Profile() {
               ACCOUNT
             </span>
             <h1>Profile</h1>
-            <p>
-              Manage your tester account information.
-            </p>
+            <p>Add the information needed for your tester account.</p>
           </div>
 
           <div className="avatar">
-            {initial}
+            {(firstName || session?.user?.email || "T").charAt(0).toUpperCase()}
           </div>
         </div>
 
-        <div className="dashboard-grid">
+        <div className="profile-page-grid">
+          <section className="dash-card profile-form-card">
+            <div className="card-title">
+              <span>Tester information</span>
+              <UserRound size={20} />
+            </div>
+
+            <form className="profile-form" onSubmit={saveProfile}>
+              <div className="profile-form-grid">
+                <label className="field">
+                  <span>First Name</span>
+                  <input
+                    type="text"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    placeholder="First name"
+                    autoComplete="given-name"
+                    required
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Last Name</span>
+                  <input
+                    type="text"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    placeholder="Last name"
+                    autoComplete="family-name"
+                    required
+                  />
+                </label>
+              </div>
+
+              <label className="field">
+                <span>Discord Name</span>
+                <input
+                  type="text"
+                  value={discordName}
+                  onChange={(e) => setDiscordName(e.target.value)}
+                  placeholder="Your Discord username"
+                  autoComplete="off"
+                />
+              </label>
+
+              <label className="field">
+                <span>Phone Number</span>
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="+880 1XXXXXXXXX"
+                  autoComplete="tel"
+                />
+              </label>
+
+              {error && <div className="form-error">{error}</div>}
+              {message && <div className="form-success">{message}</div>}
+
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={saving}
+              >
+                {saving ? "Saving..." : "Save changes"}
+                {!saving && <ArrowRight size={16} />}
+              </button>
+            </form>
+          </section>
+
           <section className="dash-card">
             <div className="card-title">
-              <span>Account information</span>
-              <UserRound size={20} />
+              <span>Account</span>
+              <ShieldCheck size={20} />
             </div>
 
             <div className="profile-details">
               <div className="profile-row">
                 <span>Email</span>
-                <strong>{email || "Not available"}</strong>
+                <strong>{session?.user?.email || "Not available"}</strong>
               </div>
-
               <div className="profile-row">
                 <span>Account ID</span>
                 <strong className="profile-id">
                   {session?.user?.id || "Not available"}
                 </strong>
               </div>
-            </div>
-          </section>
-
-          <section className="dash-card">
-            <div className="card-title">
-              <span>Tester profile</span>
-              <ShieldCheck size={20} />
-            </div>
-
-            <div className="empty-work">
-              <UserRound size={24} />
-              <strong>Complete your profile</strong>
-              <span>
-                Your tester information and verification
-                status will appear here.
-              </span>
-
-              <Link
-                to="/kyc"
-                className="btn btn-primary"
-              >
-                Continue verification
-                <ArrowRight size={16} />
-              </Link>
             </div>
           </section>
         </div>
