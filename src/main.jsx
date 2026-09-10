@@ -1061,6 +1061,7 @@ function Dashboard() {
 
   const [kyc, setKyc] = useState(null);
   const [loadingKyc, setLoadingKyc] = useState(true);
+  const [kycError, setKycError] = useState("");
 
   const [loggingOut, setLoggingOut] =
     useState(false);
@@ -1069,15 +1070,34 @@ function Dashboard() {
     let cancelled = false;
 
     async function loadKycStatus() {
-      if (!session) return;
+      if (!session) {
+        if (!cancelled) {
+          setKyc(null);
+          setKycError("");
+          setLoadingKyc(false);
+        }
+        return;
+      }
 
       setLoadingKyc(true);
+      setKycError("");
 
       try {
         const result = await kycApi(session, "/kyc/status");
-        if (!cancelled) setKyc(result.kyc || null);
+
+        if (!cancelled) {
+          setKyc(result?.kyc || null);
+          setKycError("");
+        }
       } catch (error) {
         console.error("Unable to load KYC status:", error);
+
+        if (!cancelled) {
+          setKycError(
+            error?.message ||
+            "Unable to load your verification status."
+          );
+        }
       } finally {
         if (!cancelled) setLoadingKyc(false);
       }
@@ -1085,8 +1105,22 @@ function Dashboard() {
 
     loadKycStatus();
 
+    // Re-check when the user returns to this tab/window. This also
+    // catches the common case where KYC submission happened in the
+    // same session immediately before returning to the dashboard.
+    const refreshOnReturn = () => {
+      if (document.visibilityState === "visible") {
+        loadKycStatus();
+      }
+    };
+
+    window.addEventListener("focus", refreshOnReturn);
+    document.addEventListener("visibilitychange", refreshOnReturn);
+
     return () => {
       cancelled = true;
+      window.removeEventListener("focus", refreshOnReturn);
+      document.removeEventListener("visibilitychange", refreshOnReturn);
     };
   }, [session]);
 
@@ -1191,13 +1225,25 @@ function Dashboard() {
             <div>
 
               <span className="status-pill">
-                ACCOUNT CREATED
+                {loadingKyc
+                  ? "CHECKING STATUS"
+                  : kycError
+                    ? "STATUS UNAVAILABLE"
+                  : kyc?.status === "pending" || kyc?.status === "under_review"
+                    ? "UNDER REVIEW"
+                    : kyc?.status === "verified"
+                      ? "VERIFIED"
+                      : kyc?.status === "rejected" || kyc?.status === "needs_action"
+                        ? "ACTION REQUIRED"
+                        : "ACCOUNT CREATED"}
               </span>
 
               <h2>
                 {loadingKyc
                   ? "Loading verification status…"
-                  : kyc?.status === "pending" || kyc?.status === "under_review"
+                  : kycError
+                    ? "Verification status unavailable."
+                    : kyc?.status === "pending" || kyc?.status === "under_review"
                     ? "Under Review."
                     : kyc?.status === "verified"
                       ? "Verification complete."
@@ -1209,7 +1255,9 @@ function Dashboard() {
               <p>
                 {loadingKyc
                   ? "Checking the latest status of your identity verification."
-                  : kyc?.status === "pending" || kyc?.status === "under_review"
+                  : kycError
+                    ? "We could not retrieve the latest verification status. Please retry before starting or continuing verification."
+                    : kyc?.status === "pending" || kyc?.status === "under_review"
                     ? "Your identity documents have been submitted successfully. Our verification team is reviewing your application."
                     : kyc?.status === "verified"
                       ? "Your identity has been verified. You can now access eligible tester opportunities."
@@ -1218,17 +1266,35 @@ function Dashboard() {
                         : "Your first step is to verify your identity. This keeps the tester network trusted and helps us match you with eligible projects."}
               </p>
 
-              {kyc?.status !== "pending" && kyc?.status !== "under_review" && kyc?.status !== "verified" && (
-                <Link
-                  to="/kyc"
-                  className="btn btn-primary"
-                >
-                  {kyc?.status === "rejected" || kyc?.status === "needs_action"
-                    ? "Continue verification"
-                    : "Start verification"}
-                  <ArrowRight size={17} />
-                </Link>
+              {kycError ? (
+                <div className="kyc-status-error">
+                  <strong>VERIFICATION STATUS UNAVAILABLE</strong>
+                  <span>{kycError}</span>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => window.location.reload()}
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : (
+                kyc?.status !== "pending" &&
+                kyc?.status !== "under_review" &&
+                kyc?.status !== "verified" && (
+                  <Link
+                    to="/kyc"
+                    className="btn btn-primary"
+                  >
+                    {kyc?.status === "rejected" || kyc?.status === "needs_action"
+                      ? "Continue verification"
+                      : "Start verification"}
+                    <ArrowRight size={17} />
+                  </Link>
+                )
               )}
+
+            </div>
 
             <div className="dash-orb">
               <ShieldCheck size={55} />
@@ -1253,21 +1319,25 @@ function Dashboard() {
             <div className="progress-row">
 
               <span className="progress-value">
-                {kyc?.status === "verified"
-                  ? "100"
-                  : kyc?.status === "pending" || kyc?.status === "under_review"
-                    ? "60"
-                    : "20"}%
+                {kycError
+                  ? "—"
+                  : kyc?.status === "verified"
+                    ? "100%"
+                    : kyc?.status === "pending" || kyc?.status === "under_review"
+                      ? "60%"
+                      : "20%"}
               </span>
 
               <span>
-                {kyc?.status === "verified"
-                  ? "Verified"
-                  : kyc?.status === "pending" || kyc?.status === "under_review"
-                    ? "Under Review"
-                    : kyc?.status === "rejected" || kyc?.status === "needs_action"
-                      ? "Needs Action"
-                      : "In progress"}
+                {kycError
+                  ? "Unavailable"
+                  : kyc?.status === "verified"
+                    ? "Verified"
+                    : kyc?.status === "pending" || kyc?.status === "under_review"
+                      ? "Under Review"
+                      : kyc?.status === "rejected" || kyc?.status === "needs_action"
+                        ? "Needs Action"
+                        : "In progress"}
               </span>
 
             </div>
@@ -1278,11 +1348,13 @@ function Dashboard() {
               <span
                 style={{
                   width:
-                    kyc?.status === "verified"
-                      ? "100%"
-                      : kyc?.status === "pending" || kyc?.status === "under_review"
-                        ? "60%"
-                        : "20%",
+                    kycError
+                      ? "0%"
+                      : kyc?.status === "verified"
+                        ? "100%"
+                        : kyc?.status === "pending" || kyc?.status === "under_review"
+                          ? "60%"
+                          : "20%",
                 }}
               />
 
@@ -1318,8 +1390,13 @@ function Dashboard() {
               </strong>
 
               <span>
-                Complete your verification
-                to unlock eligible opportunities.
+                {kycError
+                  ? "Verification status is unavailable. Retry to check your account."
+                  : kyc?.status === "pending" || kyc?.status === "under_review"
+                    ? "Your verification is under review. Eligible opportunities will unlock after approval."
+                    : kyc?.status === "verified"
+                      ? "Your account is verified. Eligible opportunities will appear here when available."
+                      : "Complete your verification to unlock eligible opportunities."}
               </span>
 
             </div>
