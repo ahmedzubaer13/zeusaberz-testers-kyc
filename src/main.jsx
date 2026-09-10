@@ -1634,6 +1634,7 @@ function KYC() {
   const [uploadedDocuments, setUploadedDocuments] = useState([]);
   const [submitted, setSubmitted] = useState(false);
   const [consent, setConsent] = useState(false);
+  const [profileComplete, setProfileComplete] = useState(true);
 
   const [identityType, setIdentityType] =
     useState("");
@@ -1654,6 +1655,36 @@ function KYC() {
       setError("");
 
       try {
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("first_name, last_name, discord_name, phone")
+          .eq("id", session.user.id)
+          .maybeSingle();
+
+        if (profileError) {
+          throw new Error("Unable to verify your tester profile.");
+        }
+
+        const complete =
+          !!profile?.first_name?.trim() &&
+          !!profile?.last_name?.trim() &&
+          !!profile?.discord_name?.trim() &&
+          !!profile?.phone?.trim();
+
+        if (!complete) {
+          if (!cancelled) {
+            setProfileComplete(false);
+            setError(
+              "Your tester profile is incomplete. First Name, Last Name, Discord Name, and Phone Number are required before KYC verification."
+            );
+          }
+          return;
+        }
+
+        if (!cancelled) {
+          setProfileComplete(true);
+        }
+
         const result = await kycApi(
           session,
           "/kyc/status"
@@ -1905,6 +1936,62 @@ function KYC() {
     } finally {
       setWorking(false);
     }
+  }
+
+  if (!loading && !profileComplete) {
+    return (
+      <div className="kyc-page">
+        <header className="site-header">
+          <div className="container nav">
+            <Brand />
+
+            <span className="secure-nav">
+              <LockKeyhole size={15} />
+              Verification setup
+            </span>
+          </div>
+        </header>
+
+        <div className="kyc-wrap">
+          <div className="kyc-card kyc-profile-required">
+            <div className="eyebrow">
+              PROFILE REQUIRED
+            </div>
+
+            <h1>
+              Complete your tester profile first.
+            </h1>
+
+            <p>
+              Before you can start KYC verification, you must provide your
+              First Name, Last Name, Discord Name, and Phone Number.
+            </p>
+
+            <div className="kyc-profile-required-list">
+              <span><CheckCircle2 size={15} /> First Name</span>
+              <span><CheckCircle2 size={15} /> Last Name</span>
+              <span><CheckCircle2 size={15} /> Discord Name</span>
+              <span><CheckCircle2 size={15} /> Phone Number</span>
+            </div>
+
+            <Link
+              to="/profile"
+              className="btn btn-primary btn-full"
+            >
+              Complete profile
+              <ArrowRight size={16} />
+            </Link>
+
+            <Link
+              to="/dashboard"
+              className="btn btn-secondary btn-full"
+            >
+              Back to dashboard
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (loading) {
